@@ -1,0 +1,166 @@
+version: '3.8'
+
+services:
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.4.0
+    hostname: zookeeper
+    container_name: zookeeper
+    ports:
+      - '2181:2181'
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    networks:
+      - wallet-network
+
+  kafka:
+    image: confluentinc/cp-kafka:7.4.0
+    hostname: kafka
+    container_name: kafka
+    depends_on:
+      - zookeeper
+    env_file:
+      - .env
+    ports:
+      - '29092:29092'
+    networks:
+      - wallet-network
+
+  control-center:
+    image: confluentinc/cp-enterprise-control-center:7.4.0
+    hostname: control-center
+    container_name: control-center
+    depends_on:
+      - kafka
+    ports:
+      - '9021:9021'
+    env_file:
+      - .env
+    networks:
+      - wallet-network
+
+  postgres:
+    image: postgres:16-alpine
+    hostname: postgres
+    container_name: postgres
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - '5432:5432'
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          'pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-wallet_db}',
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - wallet-network
+
+  redis:
+    image: redis:6-alpine
+    hostname: redis
+    container_name: redis
+    restart: unless-stopped
+    ports:
+      - '6379:6379'
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - wallet-network
+
+  vault:
+    image: hashicorp/vault:1.15.2
+    hostname: vault
+    container_name: vault
+    ports:
+      - '8200:8200'
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: 'wallet-token'
+      VAULT_DEV_LISTEN_ADDRESS: '0.0.0.0:8200'
+    cap_add:
+      - IPC_LOCK
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          'wget -qO- http://127.0.0.1:8200/v1/sys/health | grep -q ''"initialized":true,"sealed":false''',
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+    networks:
+      - wallet-network
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    container_name: api
+    command: npm run start:api
+    ports:
+      - '9230:9230'
+      - '9229:9229'
+    env_file:
+      - .env
+    environment:
+      - RUN_TX_PROCESSOR=false
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      vault:
+        condition: service_healthy
+      kafka:
+        condition: service_started
+    networks:
+      - wallet-network
+    volumes:
+      - ./apps/:/usr/src/app/apps
+      - ./libs/:/usr/src/app/libs
+      - ./dist/:/usr/src/app/dist
+
+  consumer:
+    build:
+      context: .
+      dockerfile: apps/consumer/Dockerfile
+    container_name: consumer
+    command: npm run start:consumer
+    env_file:
+      - .env
+    environment:
+      - RUN_TX_PROCESSOR=true
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      vault:
+        condition: service_healthy
+      kafka:
+        condition: service_started
+    networks:
+      - wallet-network
+    volumes:
+      - ./apps/:/usr/src/app/apps
+      - ./libs/:/usr/src/app/libs
+      - ./dist/:/usr/src/app/dist
+
+volumes:
+  postgres-data:
+  redis-data:
+
+networks:
+  wallet-network:
+    driver: bridge
