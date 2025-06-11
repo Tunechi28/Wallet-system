@@ -257,6 +257,7 @@ This separation reduces module coupling, making the system easier to maintain an
 **Prioritized Mempool**: Instead of a simple FIFO queue (Redis list), a Redis Sorted Set could be used for the mempool. This would allow transactions with higher fees to be processed first, creating a fee market similar to real blockchains.
 
 5. **Security and Observability**
+
 **Full Observability Stack**: Integrate a complete observability solution (e.g., OpenTelemetry) to provide distributed tracing across the api and consumer services. This is invaluable for debugging issues in a microservices environment.
 
 **Dead-Letter Queue (DLQ) Management**: The system moves failed transactions to a DLQ in Redis. A separate monitoring tool or administrative endpoint should be created to inspect, retry, or manually resolve these failed transactions.
